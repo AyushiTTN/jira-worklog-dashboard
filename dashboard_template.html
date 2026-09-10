@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jira Worklog Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --panel-2: #243044;
+      --text: #e7edf6;
+      --muted: #9db0c7;
+      --accent: #4c9aff;
+      --success: #57d9a3;
+      --warning: #ffc400;
+      --danger: #ff7452;
+      --border: #2f3f57;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    header { margin-bottom: 24px; }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    .sub { color: var(--muted); font-size: 14px; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin: 20px 0;
+      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    label { color: var(--muted); font-size: 13px; }
+    select {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      min-width: 220px;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .stat .value { font-size: 24px; font-weight: 700; }
+    .stat .label { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 16px; }
+    .caption { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .callout {
+      border-left: 4px solid var(--warning);
+      background: rgba(255, 196, 0, 0.08);
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    .day-block {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    .day-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      cursor: pointer;
+      background: var(--panel-2);
+    }
+    .day-head:hover { background: #2b3850; }
+    .day-body { display: none; padding: 0 16px 16px; }
+    .day-block.open .day-body { display: block; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: rgba(76, 154, 255, 0.15);
+      color: var(--accent);
+    }
+    .pill.warn { background: rgba(255, 196, 0, 0.15); color: var(--warning); }
+    .pill.low { background: rgba(255, 116, 82, 0.15); color: var(--danger); }
+    @media (max-width: 900px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 id="title">Jira Worklog Dashboard</h1>
+      <div class="sub" id="subtitle"></div>
+    </header>
+
+    <div class="controls">
+      <label for="personSelect">Person</label>
+      <select id="personSelect"></select>
+      <span class="sub" id="generatedAt"></span>
+    </div>
+
+    <div class="stats" id="stats"></div>
+    <div id="callout"></div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h2>Daily hours worked</h2>
+        <canvas id="dailyChart" height="120"></canvas>
+        <div class="caption">Hours logged per day · Mon–Fri working days highlighted in tables below</div>
+      </div>
+      <div class="panel">
+        <h2>Time by Jira ticket</h2>
+        <canvas id="issueChart" height="120"></canvas>
+        <div class="caption">Top tickets for selected person this month</div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-bottom:24px;">
+      <h2>Monthly ticket totals</h2>
+      <div id="issueTable"></div>
+    </div>
+
+    <h2 style="margin:0 0 12px;">Day-wise breakdown</h2>
+    <div id="dayList"></div>
+  </div>
+
+  <script>
+    const DATA = __DASHBOARD_DATA__;
+    let dailyChart;
+    let issueChart;
+
+    function jiraUrl(key) {
+      return `${DATA.jiraBaseUrl}/browse/${key}`;
+    }
+
+    function renderStats(person) {
+      document.getElementById("stats").innerHTML = `
+        <div class="stat"><div class="value">${person.totalFormatted}</div><div class="label">Total hours</div></div>
+        <div class="stat"><div class="value">${person.workingDaysLogged}</div><div class="label">Working days logged</div></div>
+        <div class="stat"><div class="value">${person.averageFormatted}</div><div class="label">Avg / logged day</div></div>
+        <div class="stat"><div class="value">${person.ticketCount}</div><div class="label">Tickets worked</div></div>
+      `;
+    }
+
+    function renderCallout(person) {
+      const el = document.getElementById("callout");
+      if (!person.anomalies.length) {
+        el.innerHTML = "";
+        return;
+      }
+      const lines = person.anomalies.map(a =>
+        `<strong>${a.date}</strong>: ${a.hours} (${a.type === "high" ? "above average" : "below average"})`
+      ).join(" · ");
+      el.innerHTML = `<div class="callout"><strong>Unusual days:</strong> ${lines}</div>`;
+    }
+
+    function renderCharts(person) {
+      const dailyCtx = document.getElementById("dailyChart");
+      const issueCtx = document.getElementById("issueChart");
+      if (dailyChart) dailyChart.destroy();
+      if (issueChart) issueChart.destroy();
+
+      dailyChart = new Chart(dailyCtx, {
+        type: "bar",
+        data: {
+          labels: person.dailyChart.labels,
+          datasets: [{
+            label: "Hours",
+            data: person.dailyChart.hours,
+            backgroundColor: "#4c9aff",
+            borderRadius: 6,
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: "Hours", color: "#9db0c7" }, ticks: { color: "#9db0c7" }, grid: { color: "#2f3f57" } },
+            x: { ticks: { color: "#9db0c7" }, grid: { display: false } }
+          }
+        }
+      });
+
+      issueChart = new Chart(issueCtx, {
+        type: "doughnut",
+        data: {
+          labels: person.issueChart.labels,
+          datasets: [{
+            data: person.issueChart.hours,
+            backgroundColor: ["#4c9aff", "#57d9a3", "#ffc400", "#ff7452", "#b8acf6", "#8fb8ff", "#79e2f2", "#9980ff"]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: "bottom", labels: { color: "#9db0c7", boxWidth: 12 } } }
+        }
+      });
+    }
+
+    function renderIssueTable(person) {
+      const rows = person.issueSummary.map(item => `
+        <tr>
+          <td><a href="${jiraUrl(item.key)}" target="_blank">${item.key}</a></td>
+          <td>${item.summary}</td>
+          <td style="text-align:right;">${item.formatted}</td>
+        </tr>
+      `).join("");
+      document.getElementById("issueTable").innerHTML = `
+        <table>
+          <thead><tr><th>Issue</th><th>Summary</th><th>Hours</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderDays(person) {
+      document.getElementById("dayList").innerHTML = person.days.map((day, idx) => {
+        const toneClass = day.totalHours >= 8.5 ? "warn" : day.totalHours <= 3 ? "low" : "";
+        const entryRows = day.entries.map(entry => `
+          <tr>
+            <td><a href="${jiraUrl(entry.key)}" target="_blank">${entry.key}</a></td>
+            <td>${entry.summary}</td>
+            <td>${entry.startTime}</td>
+            <td>${entry.endTime}</td>
+            <td style="text-align:right;">${entry.duration}</td>
+          </tr>
+        `).join("");
+        const ticketRows = day.ticketTotals.map(t => `
+          <tr><td><a href="${jiraUrl(t.key)}" target="_blank">${t.key}</a></td><td style="text-align:right;">${t.formatted}</td></tr>
+        `).join("");
+        return `
+          <div class="day-block ${idx === person.days.length - 1 ? "open" : ""}" data-day="${idx}">
+            <div class="day-head" onclick="toggleDay(${idx})">
+              <div><strong>${day.dateDisplay}</strong> · ${day.day}</div>
+              <div><span class="pill ${toneClass}">${day.totalFormatted}</span></div>
+            </div>
+            <div class="day-body">
+              <table style="margin-top:12px;">
+                <thead><tr><th>Issue</th><th>Description</th><th>Start</th><th>End</th><th>Duration</th></tr></thead>
+                <tbody>${entryRows}</tbody>
+              </table>
+              <h3 style="font-size:14px; margin:16px 0 8px;">Time per ticket</h3>
+              <table><thead><tr><th>Issue</th><th>Hours</th></tr></thead><tbody>${ticketRows}</tbody></table>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function toggleDay(idx) {
+      document.querySelectorAll(".day-block").forEach((el, i) => {
+        el.classList.toggle("open", i === idx ? !el.classList.contains("open") : el.classList.contains("open"));
+      });
+    }
+    window.toggleDay = toggleDay;
+
+    function renderPerson(name) {
+      const person = DATA.people.find(p => p.name === name) || DATA.people[0];
+      if (!person) return;
+      document.getElementById("title").textContent = `${person.name} · ${DATA.monthLabel}`;
+      document.getElementById("subtitle").textContent = `Jira worklog dashboard · shareable HTML report`;
+      renderStats(person);
+      renderCallout(person);
+      renderCharts(person);
+      renderIssueTable(person);
+      renderDays(person);
+    }
+
+    function init() {
+      document.getElementById("generatedAt").textContent = `Generated ${DATA.generatedAt}`;
+      const select = document.getElementById("personSelect");
+      DATA.people.forEach(person => {
+        const option = document.createElement("option");
+        option.value = person.name;
+        option.textContent = person.name;
+        select.appendChild(option);
+      });
+      select.addEventListener("change", () => renderPerson(select.value));
+      renderPerson(select.value || DATA.people[0]?.name);
+    }
+
+    init();
+  </script>
+</body>
+</html>
