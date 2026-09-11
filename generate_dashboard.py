@@ -15,6 +15,7 @@ import argparse
 import calendar
 import json
 import os
+import socket
 import sys
 import webbrowser
 from collections import defaultdict
@@ -40,14 +41,39 @@ WORKING_DAYS = {0, 1, 2, 3, 4}
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    # if not path.exists():
+    #     print(
+    #         f"Config not found: {path}\nCopy {EXAMPLE_CONFIG.name} to config.json and fill in values.",
+    #         file=sys.stderr,
+    #     )
+    #     sys.exit(1)
+    # with path.open() as f:
+    #     return json.load(f)
+    config: dict[str, Any] = {}
+    if path.exists():
+        with path.open() as f:
+            config = json.load(f)
+    env_map = {
+        "base_url": "JIRA_BASE_URL",
+        "email": "JIRA_EMAIL",
+        "api_token": "JIRA_API_TOKEN",
+        "default_author": "JIRA_DEFAULT_AUTHOR",
+        "project_key": "JIRA_PROJECT_KEY",
+    }
+    for key, env_name in env_map.items():
+        value = os.environ.get(env_name)
+        if value:
+            config[key] = value
+    required = ("base_url", "email", "api_token")
+    if not all(config.get(item) for item in required):
         print(
-            f"Config not found: {path}\nCopy {EXAMPLE_CONFIG.name} to config.json and fill in values.",
+            f"Config not found: {path}\n"
+            f"Copy {EXAMPLE_CONFIG.name} to config.json, or set "
+            "JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN.",
             file=sys.stderr,
         )
         sys.exit(1)
-    with path.open() as f:
-        return json.load(f)
+    return config
 
 
 def parse_jira_datetime(value: str) -> datetime:
@@ -395,6 +421,17 @@ def render_html(model: dict[str, Any], jira_base_url: str) -> str:
     return template.replace("__DASHBOARD_DATA__", payload)
 
 
+def lan_ip() -> str:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
+
+
 def serve_file(
     path: Path,
     port: int,
@@ -436,12 +473,23 @@ def serve_file(
                 self.end_headers()
                 self.wfile.write(payload)
 
+        def do_GET(self) -> None:
+            if self.path in ("/", "/index.html"):
+                self.path = f"/{path.name}"
+            super().do_GET()
+
     handler = DashboardHandler
-    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
-    url = f"http://127.0.0.1:{port}/{path.name}"
-    print(f"Serving dashboard at {url}")
-    print("Press Ctrl+C to stop.")
-    webbrowser.open(url)
+    # server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    # url = f"http://127.0.0.1:{port}/{path.name}"
+    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    local_url = f"http://127.0.0.1:{port}/{path.name}"
+    team_url = f"http://{lan_ip()}:{port}/{path.name}"
+    print(f"Serving dashboard at {local_url}", flush=True)
+    print(f"Team URL (same Wi-Fi/VPN): {team_url}", flush=True)
+    print("Keep this process running. Press Ctrl+C to stop.", flush=True)
+    # webbrowser.open(local_url)
+    if not os.environ.get("RENDER"):
+        webbrowser.open(local_url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -458,7 +506,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project", help="Optional Jira project key, e.g. SARATHI")
     parser.add_argument("--output", type=Path, help="Output HTML path")
     parser.add_argument("--serve", action="store_true", help="Open dashboard in local browser")
-    parser.add_argument("--port", type=int, default=8765, help="Port for --serve")
+    # parser.add_argument("--port", type=int, default=8765, help="Port for --serve")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", "8765")),
+        help="Port for --serve (Render sets PORT)",
+    )
     return parser.parse_args()
 
 

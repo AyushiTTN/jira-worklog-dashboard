@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: jira-worklog-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python generate_dashboard.py --serve
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: JIRA_BASE_URL
+        sync: false
+      - key: JIRA_EMAIL
+        sync: false
+      - key: JIRA_API_TOKEN
+        sync: false
+      - key: JIRA_DEFAULT_AUTHOR
+        value: Ayushi Mittal
+      - key: JIRA_PROJECT_KEY
+        value: SARATHI
