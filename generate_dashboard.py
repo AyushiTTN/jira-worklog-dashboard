@@ -18,7 +18,9 @@ import os
 import sys
 import webbrowser
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+# from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -81,23 +83,47 @@ class JiraClient:
         response.raise_for_status()
         return response.json()
 
+    def _post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        url = urljoin(self.base_url, path.lstrip("/"))
+        response = self.session.post(url, json=json_body, timeout=60)
+        response.raise_for_status()
+        return response.json()
+
     def search_issues(self, jql: str, fields: list[str]) -> list[dict[str, Any]]:
+        # GET /rest/api/3/search was removed (HTTP 410). Use /search/jql with
+        # cursor pagination instead of startAt/total.
+        # issues: list[dict[str, Any]] = []
+        # start_at = 0
+        # while True:
+        #     payload = self._get(
+        #         "rest/api/3/search",
+        #         {
+        #             "jql": jql,
+        #             "startAt": start_at,
+        #             "maxResults": 100,
+        #             "fields": ",".join(fields),
+        #         },
+        #     )
+        #     issues.extend(payload.get("issues", []))
+        #     start_at += payload.get("maxResults", 100)
+        #     total = payload.get("total", 0)
+        #     if start_at >= total:
+        #         break
+        # return issues
         issues: list[dict[str, Any]] = []
-        start_at = 0
+        next_page_token: str | None = None
         while True:
-            payload = self._get(
-                "rest/api/3/search",
-                {
-                    "jql": jql,
-                    "startAt": start_at,
-                    "maxResults": 100,
-                    "fields": ",".join(fields),
-                },
-            )
+            body: dict[str, Any] = {
+                "jql": jql,
+                "maxResults": 100,
+                "fields": fields,
+            }
+            if next_page_token:
+                body["nextPageToken"] = next_page_token
+            payload = self._post("rest/api/3/search/jql", body)
             issues.extend(payload.get("issues", []))
-            start_at += payload.get("maxResults", 100)
-            total = payload.get("total", 0)
-            if start_at >= total:
+            next_page_token = payload.get("nextPageToken")
+            if payload.get("isLast", not next_page_token) or not next_page_token:
                 break
         return issues
 
@@ -125,6 +151,26 @@ def month_bounds(month: str) -> tuple[datetime, datetime, str, str]:
     return start, end, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
+def recent_months(now: datetime | None = None, count: int = 3) -> list[dict[str, str]]:
+    """Current month plus the previous two months."""
+    current = now or datetime.now()
+    year, month = current.year, current.month
+    months: list[dict[str, str]] = []
+    for _ in range(count):
+        start = datetime(year, month, 1)
+        months.append(
+            {
+                "value": start.strftime("%Y-%m"),
+                "label": start.strftime("%B %Y"),
+            }
+        )
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return months
+
+
 def author_matches(worklog: dict[str, Any], author_filter: str | None) -> bool:
     if not author_filter:
         return True
@@ -149,21 +195,35 @@ def collect_worklogs(
         f'worklogDate <= "{end_str}"',
     ]
     if author_filter:
-        jql_parts.append(f'worklogAuthor ~ "{author_filter}"')
+        # Fuzzy ~ matches nobody for display names on this site.
+        # jql_parts.append(f'worklogAuthor ~ "{author_filter}"')
+        jql_parts.append(f'worklogAuthor = "{author_filter}"')
     if project_key:
         jql_parts.append(f'project = "{project_key}"')
     jql = " AND ".join(jql_parts) + " ORDER BY updated DESC"
 
-    issues = client.search_issues(jql, ["summary", "issuetype", "project"])
+    # issues = client.search_issues(jql, ["summary", "issuetype", "project"])
+    issues = client.search_issues(
+        jql,
+        ["summary", "issuetype", "project", "worklog"],
+    )
     entries: list[dict[str, Any]] = []
 
-    for issue in issues:
+    # for issue in issues:
+    #     ...
+    #     for wl in client.fetch_issue_worklogs(issue["id"]):
+    def process_issue(issue: dict[str, Any]) -> list[dict[str, Any]]:
+        issue_entries: list[dict[str, Any]] = []
         key = issue["key"]
         fields = issue.get("fields", {})
         summary = fields.get("summary", "")
         issue_type = fields.get("issuetype", {}).get("name", "")
         project = fields.get("project", {}).get("key", "")
-        for wl in client.fetch_issue_worklogs(issue["id"]):
+        embedded_worklogs = fields.get("worklog", {})
+        worklogs = embedded_worklogs.get("worklogs", [])
+        if embedded_worklogs.get("total", 0) > len(worklogs):
+            worklogs = client.fetch_issue_worklogs(issue["id"])
+        for wl in worklogs:
             if not author_matches(wl, author_filter):
                 continue
             started = parse_jira_datetime(wl["started"])
@@ -173,7 +233,7 @@ def collect_worklogs(
             seconds = int(wl.get("timeSpentSeconds", 0))
             ended = started + timedelta(seconds=seconds)
             author = wl.get("author", {})
-            entries.append(
+            issue_entries.append(
                 {
                     "date": started.strftime("%Y-%m-%d"),
                     "day": started.strftime("%A"),
@@ -190,6 +250,11 @@ def collect_worklogs(
                     "hours": round(seconds / 3600, 2),
                 }
             )
+        return issue_entries
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for issue_entries in executor.map(process_issue, issues):
+            entries.extend(issue_entries)
 
     entries.sort(key=lambda item: (item["date"], item["author"], item["startTime"]))
     return entries
@@ -208,7 +273,7 @@ def build_dashboard_model(
         by_author[entry["author"]].append(entry)
 
     people = []
-    for author_name in sorted(by_author.keys()):
+    for author_name in sorted(by_author.keys(), key=str.casefold):
         author_entries = by_author[author_name]
         by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
         by_issue: dict[str, int] = defaultdict(int)
@@ -330,11 +395,48 @@ def render_html(model: dict[str, Any], jira_base_url: str) -> str:
     return template.replace("__DASHBOARD_DATA__", payload)
 
 
-def serve_file(path: Path, port: int) -> None:
+def serve_file(
+    path: Path,
+    port: int,
+    refresh_dashboard: Any,
+) -> None:
     directory = str(path.parent)
-    handler = lambda *args, **kwargs: SimpleHTTPRequestHandler(  # noqa: E731
-        *args, directory=directory, **kwargs
-    )
+    # handler = lambda *args, **kwargs: SimpleHTTPRequestHandler(  # noqa: E731
+    #     *args, directory=directory, **kwargs
+    # )
+    class DashboardHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *handler_args: Any, **handler_kwargs: Any):
+            super().__init__(
+                *handler_args,
+                directory=directory,
+                **handler_kwargs,
+            )
+
+        def do_POST(self) -> None:
+            if self.path != "/refresh":
+                self.send_error(404)
+                return
+            try:
+                # model = refresh_dashboard()
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                body = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+                model = refresh_dashboard(body.get("month"))
+                payload = json.dumps(model).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except Exception as exc:
+                payload = json.dumps({"error": str(exc)}).encode("utf-8")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+    handler = DashboardHandler
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     url = f"http://127.0.0.1:{port}/{path.name}"
     print(f"Serving dashboard at {url}")
@@ -360,9 +462,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    config = load_config(args.config)
+def generate_dashboard(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    month: str | None = None,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    selected_month = month or args.month
+    allowed = {item["value"] for item in recent_months()}
+    if month and selected_month not in allowed:
+        raise ValueError("Month must be the current month or one of the previous two months.")
+
     client = JiraClient(
         config["base_url"],
         config["email"],
@@ -377,14 +487,16 @@ def main() -> None:
     elif args.author:
         author_filters = [args.author]
     else:
-        author_filters = [config.get("default_author")]
+        # author_filters = [config.get("default_author") or "Ayushi Mittal"]
+        author_filters = [None]
 
     entries: list[dict[str, Any]] = []
     for author_filter in author_filters:
         entries.extend(
             collect_worklogs(
                 client,
-                args.month,
+                # args.month,
+                selected_month,
                 author_filter,
                 args.project or config.get("project_key"),
             )
@@ -406,19 +518,47 @@ def main() -> None:
         seen.add(key)
         unique_entries.append(entry)
 
-    selected_authors = None if args.team else author_filters
-    model = build_dashboard_model(unique_entries, args.month, selected_authors)  # type: ignore[arg-type]
+    # selected_authors = None if args.team else author_filters
+    selected_authors = None if author_filters == [None] else author_filters
+    # model = build_dashboard_model(unique_entries, args.month, selected_authors)  # type: ignore[arg-type]
+    model = build_dashboard_model(unique_entries, selected_month, selected_authors)  # type: ignore[arg-type]
+    model["defaultPerson"] = config.get("default_author") or "Ayushi Mittal"
+    model["availableMonths"] = recent_months()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = args.output or OUTPUT_DIR / f"worklog-dashboard-{args.month}.html"
-    output_path.write_text(render_html(model, config["base_url"]), encoding="utf-8")
+    # output_path = args.output or OUTPUT_DIR / f"worklog-dashboard-{args.month}.html"
+    html_path = output_path or args.output or OUTPUT_DIR / f"worklog-dashboard-{selected_month}.html"
+    html_path.write_text(render_html(model, config["base_url"]), encoding="utf-8")
 
-    print(f"Generated: {output_path}")
+    print(f"Generated: {html_path}")
     print(f"People: {', '.join(person['name'] for person in model['people']) or 'none'}")
     print(f"Share this file with teammates — it works offline in any browser.")
+    return model
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    model = generate_dashboard(args, config)
 
     if args.serve:
-        serve_file(output_path, args.port)
+        # serve_file(output_path, args.port)
+        output_path = args.output or OUTPUT_DIR / f"worklog-dashboard-{args.month}.html"
+        # serve_file(
+        #     output_path,
+        #     args.port,
+        #     lambda: generate_dashboard(args, config),
+        # )
+        serve_file(
+            output_path,
+            args.port,
+            lambda selected=None: generate_dashboard(
+                args,
+                config,
+                month=selected,
+                output_path=output_path,
+            ),
+        )
 
 
 if __name__ == "__main__":

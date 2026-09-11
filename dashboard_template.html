@@ -7,16 +7,22 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {
-      --bg: #0f1419;
+      /* --bg: #0f1419;
       --panel: #1a2332;
       --panel-2: #243044;
       --text: #e7edf6;
-      --muted: #9db0c7;
+      --muted: #9db0c7; */
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --panel-2: #f0f4f8;
+      --text: #172b4d;
+      --muted: #5e6c84;
       --accent: #4c9aff;
       --success: #57d9a3;
       --warning: #ffc400;
       --danger: #ff7452;
-      --border: #2f3f57;
+      /* --border: #2f3f57; */
+      --border: #dfe1e6;
     }
     * { box-sizing: border-box; }
     body {
@@ -42,7 +48,7 @@
       border-radius: 12px;
     }
     label { color: var(--muted); font-size: 13px; }
-    select {
+    select, button {
       background: var(--panel-2);
       color: var(--text);
       border: 1px solid var(--border);
@@ -50,6 +56,38 @@
       padding: 8px 12px;
       min-width: 220px;
     }
+    button {
+      min-width: auto;
+      cursor: pointer;
+      font-weight: 600;
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button:hover { background: #0c66e4; }
+    button:disabled { cursor: wait; opacity: 0.65; }
+    .refresh-status { color: var(--muted); font-size: 13px; }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .tab-button {
+      background: transparent;
+      color: var(--muted);
+      border: 0;
+      border-radius: 0;
+      padding: 10px 16px;
+      border-bottom: 3px solid transparent;
+    }
+    .tab-button:hover { background: var(--panel-2); }
+    .tab-button.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -101,7 +139,8 @@
       cursor: pointer;
       background: var(--panel-2);
     }
-    .day-head:hover { background: #2b3850; }
+    /* .day-head:hover { background: #2b3850; } */
+    .day-head:hover { background: #e9f2ff; }
     .day-body { display: none; padding: 0 16px 16px; }
     .day-block.open .day-body { display: block; }
     table {
@@ -128,8 +167,60 @@
     }
     .pill.warn { background: rgba(255, 196, 0, 0.15); color: var(--warning); }
     .pill.low { background: rgba(255, 116, 82, 0.15); color: var(--danger); }
+    .pill.good { background: #dcfce7; color: #166534; }
+    .day-block.good .day-head { background: #dcfce7; }
+    .day-block.warning .day-head { background: #fef3c7; }
+    .day-block.low .day-head { background: #fee2e2; }
+    .day-block.good { border-color: #86efac; }
+    .day-block.warning { border-color: #fcd34d; }
+    .day-block.low { border-color: #fca5a5; }
+    .calendar-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(80px, 1fr));
+      gap: 8px;
+    }
+    .calendar-weekday {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      padding: 4px;
+    }
+    .calendar-day {
+      min-height: 88px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px;
+      background: var(--panel-2);
+    }
+    .calendar-day.empty { visibility: hidden; }
+    .calendar-day.future, .calendar-day.weekend { background: #f4f5f7; }
+    .calendar-day.good { background: #dcfce7; border-color: #86efac; }
+    .calendar-day.warning { background: #fef3c7; border-color: #fcd34d; }
+    .calendar-day.low { background: #fee2e2; border-color: #fca5a5; }
+    .calendar-date { color: var(--muted); font-size: 12px; }
+    .calendar-hours { font-size: 19px; font-weight: 700; margin-top: 9px; }
+    .calendar-note { color: var(--muted); font-size: 11px; }
     @media (max-width: 900px) {
       .grid-2 { grid-template-columns: 1fr; }
+      .calendar { grid-template-columns: repeat(7, minmax(42px, 1fr)); gap: 4px; }
+      .calendar-day { min-height: 70px; padding: 6px; }
+      .calendar-hours { font-size: 14px; }
     }
   </style>
 </head>
@@ -143,37 +234,61 @@
     <div class="controls">
       <label for="personSelect">Person</label>
       <select id="personSelect"></select>
+      <label for="monthSelect">Month</label>
+      <select id="monthSelect"></select>
+      <button id="refreshButton" type="button">Refresh dashboard</button>
+      <span class="refresh-status" id="refreshStatus"></span>
       <span class="sub" id="generatedAt"></span>
     </div>
 
-    <div class="stats" id="stats"></div>
-    <div id="callout"></div>
+    <div class="tabs" role="tablist">
+      <button class="tab-button active" data-tab="dashboard" type="button">Dashboard</button>
+      <button class="tab-button" data-tab="details" type="button">Detailed worklogs</button>
+    </div>
 
-    <div class="grid-2">
-      <div class="panel">
-        <h2>Daily hours worked</h2>
-        <canvas id="dailyChart" height="120"></canvas>
-        <div class="caption">Hours logged per day · Mon–Fri working days highlighted in tables below</div>
+    <div class="tab-panel active" id="dashboardTab">
+      <div class="stats" id="stats"></div>
+      <div id="callout"></div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <!--
+          <h2>Daily hours worked</h2>
+          <canvas id="dailyChart" height="120"></canvas>
+          <div class="caption">Hours logged per day · Mon–Fri working days highlighted in tables below</div>
+          -->
+          <h2>Monthly worklog calendar</h2>
+          <div class="calendar-legend">
+            <span><i class="legend-dot" style="background:#22c55e"></i>8 hours or more</span>
+            <span><i class="legend-dot" style="background:#eab308"></i>7 to under 8 hours</span>
+            <span><i class="legend-dot" style="background:#ef4444"></i>Below 7 hours</span>
+          </div>
+          <div class="calendar" id="worklogCalendar"></div>
+          <div class="caption">Weekends and future dates are not color-coded.</div>
+        </div>
+        <div class="panel">
+          <h2>Time by Jira ticket</h2>
+          <canvas id="issueChart" height="120"></canvas>
+          <div class="caption">Top tickets for selected person this month</div>
+        </div>
       </div>
-      <div class="panel">
-        <h2>Time by Jira ticket</h2>
-        <canvas id="issueChart" height="120"></canvas>
-        <div class="caption">Top tickets for selected person this month</div>
+
+      <div class="panel" style="margin-bottom:24px;">
+        <h2>Monthly ticket totals</h2>
+        <div id="issueTable"></div>
       </div>
     </div>
 
-    <div class="panel" style="margin-bottom:24px;">
-      <h2>Monthly ticket totals</h2>
-      <div id="issueTable"></div>
+    <div class="tab-panel" id="detailsTab">
+      <h2 style="margin:0 0 12px;">Day-wise breakdown</h2>
+      <div id="dayList"></div>
     </div>
-
-    <h2 style="margin:0 0 12px;">Day-wise breakdown</h2>
-    <div id="dayList"></div>
   </div>
 
   <script>
-    const DATA = __DASHBOARD_DATA__;
-    let dailyChart;
+    // const DATA = __DASHBOARD_DATA__;
+    let DATA = __DASHBOARD_DATA__;
+    // let dailyChart;
     let issueChart;
 
     function jiraUrl(key) {
@@ -202,31 +317,33 @@
     }
 
     function renderCharts(person) {
-      const dailyCtx = document.getElementById("dailyChart");
+      // const dailyCtx = document.getElementById("dailyChart");
       const issueCtx = document.getElementById("issueChart");
-      if (dailyChart) dailyChart.destroy();
+      // if (dailyChart) dailyChart.destroy();
       if (issueChart) issueChart.destroy();
 
-      dailyChart = new Chart(dailyCtx, {
-        type: "bar",
-        data: {
-          labels: person.dailyChart.labels,
-          datasets: [{
-            label: "Hours",
-            data: person.dailyChart.hours,
-            backgroundColor: "#4c9aff",
-            borderRadius: 6,
-          }]
-        },
-        options: {
-          responsive: true,
-          plugins: { legend: { display: false } },
-          scales: {
-            y: { beginAtZero: true, title: { display: true, text: "Hours", color: "#9db0c7" }, ticks: { color: "#9db0c7" }, grid: { color: "#2f3f57" } },
-            x: { ticks: { color: "#9db0c7" }, grid: { display: false } }
+      /*
+        dailyChart = new Chart(dailyCtx, {
+          type: "bar",
+          data: {
+            labels: person.dailyChart.labels,
+            datasets: [{
+              label: "Hours",
+              data: person.dailyChart.hours,
+              backgroundColor: "#4c9aff",
+              borderRadius: 6,
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { beginAtZero: true, title: { display: true, text: "Hours", color: "#9db0c7" }, ticks: { color: "#9db0c7" }, grid: { color: "#2f3f57" } },
+              x: { ticks: { color: "#9db0c7" }, grid: { display: false } }
+            }
           }
-        }
-      });
+        });
+      */
 
       issueChart = new Chart(issueCtx, {
         type: "doughnut",
@@ -239,9 +356,49 @@
         },
         options: {
           responsive: true,
-          plugins: { legend: { position: "bottom", labels: { color: "#9db0c7", boxWidth: 12 } } }
+          // plugins: { legend: { position: "bottom", labels: { color: "#9db0c7", boxWidth: 12 } } }
+          plugins: { legend: { position: "bottom", labels: { color: "#5e6c84", boxWidth: 12 } } }
         }
       });
+    }
+
+    function renderCalendar(person) {
+      const [year, month] = DATA.month.split("-").map(Number);
+      const firstDay = new Date(year, month - 1, 1);
+      const lastDate = new Date(year, month, 0).getDate();
+      const startOffset = (firstDay.getDay() + 6) % 7;
+      const hoursByDate = Object.fromEntries(person.days.map(day => [day.date, day]));
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      const cells = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        .map(day => `<div class="calendar-weekday">${day}</div>`);
+
+      for (let i = 0; i < startOffset; i += 1) {
+        cells.push('<div class="calendar-day empty"></div>');
+      }
+      for (let dayNumber = 1; dayNumber <= lastDate; dayNumber += 1) {
+        const date = new Date(year, month - 1, dayNumber);
+        const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
+        const worklogDay = hoursByDate[dateKey];
+        const hours = worklogDay?.totalHours || 0;
+        const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+        const isFuture = date > today;
+        let tone = "future";
+        if (isWeekend) tone = "weekend";
+        else if (!isFuture && hours >= 8) tone = "good";
+        else if (!isFuture && hours >= 7) tone = "warning";
+        else if (!isFuture) tone = "low";
+        const hoursLabel = worklogDay ? worklogDay.totalFormatted : (isFuture ? "—" : "0h");
+        const note = isWeekend ? "Weekend" : (isFuture ? "" : "logged");
+        cells.push(`
+          <div class="calendar-day ${tone}" title="${dateKey}: ${hoursLabel}">
+            <div class="calendar-date">${dayNumber}</div>
+            <div class="calendar-hours">${hoursLabel}</div>
+            <div class="calendar-note">${note}</div>
+          </div>
+        `);
+      }
+      document.getElementById("worklogCalendar").innerHTML = cells.join("");
     }
 
     function renderIssueTable(person) {
@@ -262,7 +419,8 @@
 
     function renderDays(person) {
       document.getElementById("dayList").innerHTML = person.days.map((day, idx) => {
-        const toneClass = day.totalHours >= 8.5 ? "warn" : day.totalHours <= 3 ? "low" : "";
+        // const toneClass = day.totalHours >= 8.5 ? "warn" : day.totalHours <= 3 ? "low" : "";
+        const toneClass = day.totalHours >= 8 ? "good" : day.totalHours >= 7 ? "warning" : "low";
         const entryRows = day.entries.map(entry => `
           <tr>
             <td><a href="${jiraUrl(entry.key)}" target="_blank">${entry.key}</a></td>
@@ -276,7 +434,8 @@
           <tr><td><a href="${jiraUrl(t.key)}" target="_blank">${t.key}</a></td><td style="text-align:right;">${t.formatted}</td></tr>
         `).join("");
         return `
-          <div class="day-block ${idx === person.days.length - 1 ? "open" : ""}" data-day="${idx}">
+          <!-- <div class="day-block ${idx === person.days.length - 1 ? "open" : ""}" data-day="${idx}"> -->
+          <div class="day-block ${toneClass} ${idx === person.days.length - 1 ? "open" : ""}" data-day="${idx}">
             <div class="day-head" onclick="toggleDay(${idx})">
               <div><strong>${day.dateDisplay}</strong> · ${day.day}</div>
               <div><span class="pill ${toneClass}">${day.totalFormatted}</span></div>
@@ -308,22 +467,106 @@
       document.getElementById("subtitle").textContent = `Jira worklog dashboard · shareable HTML report`;
       renderStats(person);
       renderCallout(person);
+      renderCalendar(person);
       renderCharts(person);
       renderIssueTable(person);
       renderDays(person);
     }
 
-    function init() {
-      document.getElementById("generatedAt").textContent = `Generated ${DATA.generatedAt}`;
+    function populatePeople(selectedName) {
       const select = document.getElementById("personSelect");
-      DATA.people.forEach(person => {
+      select.innerHTML = "";
+      // DATA.people.forEach(person => {
+      [...DATA.people].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })).forEach(person => {
         const option = document.createElement("option");
         option.value = person.name;
         option.textContent = person.name;
         select.appendChild(option);
       });
-      select.addEventListener("change", () => renderPerson(select.value));
+      const preferredName = selectedName || DATA.defaultPerson || DATA.people[0]?.name;
+      if (DATA.people.some(person => person.name === preferredName)) {
+        select.value = preferredName;
+      }
       renderPerson(select.value || DATA.people[0]?.name);
+    }
+
+    function populateMonths() {
+      const select = document.getElementById("monthSelect");
+      const months = [...(DATA.availableMonths || [])];
+      if (DATA.month && !months.some(item => item.value === DATA.month)) {
+        months.unshift({ value: DATA.month, label: DATA.monthLabel });
+      }
+      select.innerHTML = "";
+      months.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label;
+        select.appendChild(option);
+      });
+      select.value = DATA.month;
+    }
+
+    async function refreshDashboard() {
+      const button = document.getElementById("refreshButton");
+      const monthSelect = document.getElementById("monthSelect");
+      const status = document.getElementById("refreshStatus");
+      const selectedName = document.getElementById("personSelect").value;
+      button.disabled = true;
+      monthSelect.disabled = true;
+      status.textContent = "Fetching Jira data…";
+      try {
+        // const response = await fetch("/refresh", { method: "POST" });
+        const response = await fetch("/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ month: monthSelect.value || DATA.month }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Refresh failed");
+        DATA = payload;
+        document.getElementById("generatedAt").textContent = `Generated ${DATA.generatedAt}`;
+        populateMonths();
+        populatePeople(selectedName);
+        status.textContent = "Dashboard refreshed";
+      } catch (error) {
+        status.textContent = location.protocol === "file:"
+          ? "Start with --serve to change month or refresh Jira data"
+          : `Refresh failed: ${error.message}`;
+      } finally {
+        button.disabled = false;
+        monthSelect.disabled = false;
+      }
+    }
+
+    function showTab(tabName) {
+      document.querySelectorAll(".tab-button").forEach(button => {
+        button.classList.toggle("active", button.dataset.tab === tabName);
+      });
+      document.getElementById("dashboardTab").classList.toggle("active", tabName === "dashboard");
+      document.getElementById("detailsTab").classList.toggle("active", tabName === "details");
+    }
+
+    function init() {
+      document.getElementById("generatedAt").textContent = `Generated ${DATA.generatedAt}`;
+      /*
+        const select = document.getElementById("personSelect");
+        DATA.people.forEach(person => {
+          const option = document.createElement("option");
+          option.value = person.name;
+          option.textContent = person.name;
+          select.appendChild(option);
+        });
+      */
+      const select = document.getElementById("personSelect");
+      select.addEventListener("change", () => renderPerson(select.value));
+      // renderPerson(select.value || DATA.people[0]?.name);
+      populatePeople(DATA.defaultPerson);
+      populateMonths();
+      document.getElementById("refreshButton").addEventListener("click", refreshDashboard);
+      document.getElementById("monthSelect").addEventListener("change", refreshDashboard);
+      document.querySelectorAll(".tab-button").forEach(button => {
+        button.addEventListener("click", () => showTab(button.dataset.tab));
+      });
     }
 
     init();

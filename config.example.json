@@ -2,6 +2,6 @@
   "base_url": "https://the-nudge.atlassian.net",
   "email": "your.email@company.com",
   "api_token": "YOUR_JIRA_API_TOKEN",
-  "default_author": "Your Display Name",
+  "default_author": "Ayushi Mittal",
   "project_key": "SARATHI"
 }
